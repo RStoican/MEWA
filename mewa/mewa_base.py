@@ -65,7 +65,10 @@ class MEWA(gym.Env, ABC):
         pass
 
     def get_all_task_idx(self):
-        return range(len(self.tasks))
+        return list(range(len(self.tasks)))
+
+    def set_tasks(self, tasks):
+        self.tasks = tasks
 
     # Reset the current task to the initial state
     def reset(self, seed=None, return_info=False, options=None):

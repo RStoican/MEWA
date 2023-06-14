@@ -4,15 +4,13 @@ from abc import ABC
 from datetime import datetime
 from os import listdir
 from os.path import isfile, join
-from pathlib import Path
 
 import numpy as np
 import torch
-import yaml
 from gym import spaces
 
 from mewa.mewa_base import MEWA
-from mewa.mewa_utils.utils import create_logger, ACTION_LABELS, color_to_one_hot
+from mewa.mewa_utils.utils import create_logger, ACTION_LABELS, color_to_one_hot, load_task
 
 
 def format_action(action):
@@ -40,7 +38,6 @@ class MEWASymbolic(MEWA, ABC):
                  max_episode_steps=100,
                  verbose=0,
                  log_name=None):
-        # verbose = 20
         self.verbose = verbose
         self.complex_worker = complex_worker
         self.test_worker = test_worker
@@ -80,7 +77,6 @@ class MEWASymbolic(MEWA, ABC):
     def reset_task(self, task_id):
         self._print(f'reset_task({task_id})({self.tasks[task_id]["description"]})'
                     f'({self.tasks[task_id]["worker_personality"]})', log=True)
-        print(f'reset_task({task_id})({self.tasks[task_id]["description"]})({self.tasks[task_id]["worker_personality"]})')
         self._task = self.tasks[task_id]
         self._config_reward = self._task['task']['worker_task']['rewards']
         self._progress = 0
@@ -334,16 +330,7 @@ class MEWASymbolic(MEWA, ABC):
 
     def _load_task(self, description_path):
         self._print(f"Loading task {description_path}...", log=True)
-        yaml_content = ''
-        with open(description_path, 'r') as f:
-            for line in f:
-                if not line.strip().startswith('!!python/object'):
-                    if '!!python/object' in line:
-                        line = line.split(' !!python/object')[0] + '\n'
-                    yaml_content += line
-
-        task = yaml.load(yaml_content, Loader=yaml.Loader)
-        return task
+        return load_task(description_path)
 
     """
     The default sampling method. Sample the human "personality" from different regions of the distribution, depending on

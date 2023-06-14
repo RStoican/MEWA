@@ -1,0 +1,53 @@
+# Each human's behaviour will be represented as a pair (x, y). Both x and y are sampled from 2 different Gaussian
+# distributions:
+#     x ~ N(mu_x, sd_x)
+#     y ~ N(mu_y, sd_y)
+# We can split each of these distributions into multiple regions, and use only some regions for meta-training and some
+# for meta-testing.
+# The "split" parameter is given as (n_x, n_y), where n_x and n_y are the number of regions for N(mu_x, sd_x) and
+# N(mu_y, sd_y), respectively
+# TODO: At the moment, the humans' behaviour is only defined as x. In the future, we plan to use y as well, and define the human behaviour as a Gaussian N(x, y)
+split: [5, 1]
+
+meta_train:
+  # MEWA arguments
+  env:
+    # The amount of (wide) tasks
+    wide_tasks: 1
+    # The amount of different human behaviours per task (i.e. narrow tasks per wide task)
+    narrow_tasks: 150
+
+  # The regions of the distribution to use for sampling training tasks
+  split_train: [[1, 3], [0]]
+
+  # Number of (outer-loop) updates
+  iterations: 2000
+
+  # Number of tasks per iteration
+  task_samples: 5
+
+
+meta_test:
+  # Whether to use a set of curated tasks for testing or to sample from the distribution
+  curated_tasks: True
+
+  # MEWA arguments (ignored when curated_tasks is True)
+  env:
+    wide_tasks: 1
+    narrow_tasks: 50
+
+  # The regions of the distribution to use for sampling testing tasks
+  split_test: [[0, 4], [0]]
+
+  # The number of adaptation episodes per human/task
+  adapt_episodes: 10
+
+  # How many times to run each task
+  iterations: 3
+
+  # How many times to repeat the experiment with different seeds
+  repeat: 2
+
+
+# Algorithm-specific parameters
+algorithm: None
