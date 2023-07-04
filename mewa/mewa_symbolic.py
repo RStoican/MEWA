@@ -1,7 +1,6 @@
 import copy
 import os.path
 from abc import ABC
-from datetime import datetime
 from os import listdir
 from os.path import isfile, join
 
@@ -9,7 +8,7 @@ import numpy as np
 from gym import spaces
 
 from mewa.mewa_base import MEWA
-from mewa.mewa_utils.utils import create_logger, ACTION_LABELS, color_to_one_hot, load_task
+from mewa.mewa_utils.utils import ACTION_LABELS, color_to_one_hot, load_task
 
 
 class MEWASymbolic(MEWA, ABC):
@@ -20,42 +19,32 @@ class MEWASymbolic(MEWA, ABC):
                  wide_tasks,
                  narrow_tasks,
                  complex_worker,
-                 seed,
 
+                 seed=None,
                  split_dict=None,
                  tasks=None,
                  max_episode_steps=100,
 
-                 verbose=1,
+                 verbose=0,
                  log_name=None):
-        self.verbose = verbose
         self.complex_worker = complex_worker
         self.max_episode_steps = max_episode_steps
 
         # Used for normalising rewards in wide task distributions
         self._reward_normaliser = None
 
-        seed = seed if seed is not None and seed >= 0 else np.random.randint(0, 65536)
-        self._print(f'Creating environment with seed {seed}', log=True)
-
-        if log_name is not None:
-            now = datetime.now()
-            log_file = log_name + '_' + now.strftime('%Y_%m_%d_%H_%M_%S_%f')
-            self.logger = create_logger('env', log_file)
-        else:
-            self.logger = None
-
-        observation_space = spaces.Box(low=0, high=20, shape=(18,), dtype=np.double)
         super(MEWASymbolic, self).__init__(
-            input_shape=None,
             task_path=task_path,
             wide_tasks=wide_tasks,
             narrow_tasks=narrow_tasks,
+            complex_worker=complex_worker,
             seed=seed,
             split_dict=split_dict,
             tasks=tasks,
-            observation_space=observation_space,
-            verbose=verbose)
+            observation_space=spaces.Box(low=0, high=20, shape=(18,), dtype=np.double),
+            verbose=verbose,
+            log_name=log_name
+        )
 
         # The current state of the env
         self._obs = None
@@ -72,7 +61,7 @@ class MEWASymbolic(MEWA, ABC):
                     f'     Description: {self.tasks[task_id]["description"]}\n'
                     f'     Human: {self.tasks[task_id]["worker_personality"]}', log=True)
         self._task = self.tasks[task_id]
-        self._config_reward = self._task['task']['worker_task']['rewards']
+        self._reward_function = self._task['task']['worker_task']['rewards']
         self._progress = 0
         self._step_count = 0
 
@@ -162,16 +151,13 @@ class MEWASymbolic(MEWA, ABC):
         pass
 
     def _take_step(self, action):
-        # action = format_action(action)
-
         # The action is the index of the chosen block, either one-hot encoded or not. In the former case, decode it
-        from collections.abc import Iterable
-        color_index = np.where(action == 1)[0][0] if isinstance(action, Iterable) else action
+        color_index = self._decode_action(action)
         action_label = ACTION_LABELS[color_index]
 
         if action_label in self._task['task']['block_colors']:
             next_obs, done, info = self._do_state_transition(color_index)
-            self._print(f'   Turn {self._step_count}: {ACTION_LABELS[color_index]}' + info, log=True, verbose=3)
+            self._print(f'   Turn {self._step_count}: {action_label}' + info, log=True, verbose=3)
         else:
             self._print(f'   Turn {self._step_count}: {action_label} (NOT IN TASK)', log=True, verbose=3)
             next_obs = self._get_obs()
@@ -499,48 +485,3 @@ class MEWASymbolic(MEWA, ABC):
         intervals[:, 0] = split_points[:split]
         intervals[:, 1] = np.roll(split_points, -1)[:split]
         return intervals
-
-    def _print(self, message, log=False, verbose=1):
-        if log and self.logger is not None:
-            self.logger.info(message)
-        if self.verbose >= verbose:
-            print(message)
-
-
-# Make sure the parameters of the given task are valid
-def check_task(task):
-    # Check agent parameters
-    if len(task['blocks']) != len(task['block_colors']):
-        raise ValueError("There should be as many types of blocks as there are colors. "
-                         "Expected: {}; Got: {}".format(len(task['block_colors']), len(task['blocks'])))
-    max_blocks = 5
-    for index in range(len(task['blocks'])):
-        if task['blocks'][index] < 0 or task['blocks'][index] > max_blocks:
-            raise ValueError("Each color must have at least 0 and at most {} blocks. Color {} had: {}"
-                             .format(max_blocks, task['block_colors'][index], task['blocks'][index]))
-    max_blocks = 8
-    if task['supervisor_blocks'] < 0 or task['supervisor_blocks'] > max_blocks:
-        raise ValueError("The supervisor must have at least 0 and at most {} blocks. Got: {}"
-                         .format(max_blocks, task['supervisor_blocks']))
-
-    # Check structure parameters
-    struct_task = task['worker_task']
-    if len(struct_task['blocks_position']) != struct_task['blocks_per_struct']:
-        raise ValueError("Every block should have a position relative to the first one. Expected: {}; Got: {}"
-                         .format(struct_task['blocks_per_struct'], len(struct_task['blocks_position'])))
-    if len(struct_task['mistake_positions']) != struct_task['blocks_per_struct']:
-        raise ValueError("Every block should have a mistake position relative to the first one. "
-                         "Expected: {}; Got: {}"
-                         .format(struct_task['blocks_per_struct'], len(struct_task['mistake_positions'])))
-
-    # Check goal parameters
-    goal_task = task['supervisor_task']
-    if len(goal_task['subgoals_requirements']) != goal_task['subgoals_count']:
-        raise ValueError("Every step of the supervisor's goal should have a requirement. Expected: {}; Got: {}"
-                         .format(goal_task['subgoals_count'], len(goal_task['subgoals_requirements'])))
-    if len(goal_task['subgoals']) != goal_task['subgoals_count']:
-        raise ValueError("Wrong number of sub-goals given. "
-                         "Expected: {}; Got: {}".format(goal_task['subgoals_count'], len(goal_task['subgoals'])))
-    if len(goal_task['worker_struct']) != goal_task['struct_count']:
-        raise ValueError("Wrong number of worker structures given. "
-                         "Expected: {}; Got: {}".format(goal_task['struct_count'], len(goal_task['worker_struct'])))

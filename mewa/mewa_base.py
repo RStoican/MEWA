@@ -1,5 +1,6 @@
 import abc
 from abc import ABC
+from datetime import datetime
 
 import gym
 import numpy as np
@@ -7,46 +8,53 @@ from gym import spaces
 from gym.utils import seeding
 
 from mewa.mewa_utils.one_hot_encoding import OneHotEncoding
+from mewa.mewa_utils.utils import create_logger
 
 
 class MEWA(gym.Env, ABC):
-    # The possible rewards. When the game ends, the agent gets the FINAL_REWARD. Whenever an action leads to the
-    # supervisor making progress by completing sub-goals, the agent gets the PROGRESS_REWARD. Otherwise, the agent gets
-    # the STEP_REWARD. Using discounted rewards should motivate the agent to get the progress rewards as early as
-    # possible
-    STEP_REWARD = -0.01
-    PROGRESS_REWARD = 0.1
-    FINAL_REWARD = 1
-
     def __init__(self,
-                 input_shape,
                  task_path,
                  wide_tasks,
                  narrow_tasks,
+                 complex_worker,
                  seed,
+                 split_dict,
+                 tasks,
+                 verbose,
+                 log_name,
 
-                 split_dict=None,
-                 tasks=None,
-                 observation_space=None,
-                 verbose=0):
+                 input_shape=None,
+                 observation_space=None,):
         super(MEWA, self).__init__()
-        self.input_shape = input_shape
+        self.complex_worker = complex_worker
         self.split_dict = split_dict
-        self.verbose = verbose
 
+        # Set up the logger
+        self.verbose = verbose
+        self.logger = None
+        if log_name is not None:
+            now = datetime.now()
+            log_file = log_name + '_' + now.strftime('%Y_%m_%d_%H_%M_%S_%f')
+            self.logger = create_logger('env', log_file)
+
+        # Create a seed and set up the RNG
+        seed = seed if seed is not None and seed >= 0 else np.random.randint(0, 65536)
+        self._print(f'Creating environment with seed {seed}', log=True)
         self._np_random = None
         MEWA.reset(self, seed=seed)
 
-        # The reward vector is given in the config file of the task
-        self._config_reward = None
-
-        # Keep track of the sub-goals completed
-        self._progress = 0
-
+        # Create the state and action spaces
+        assert input_shape is not None or observation_space is not None
         self.action_space = OneHotEncoding(4)
         self.observation_space = observation_space
         if self.observation_space is 0:
             self.observation_space = spaces.Box(low=0, high=1, shape=input_shape, dtype=np.double)
+
+        # For each task, the reward function will be given in the task description
+        self._reward_function = None
+
+        # Keep track of the sub-goals completed
+        self._progress = 0
 
         # Randomly generate the required number of tasks. If a list of tasks has been given, use that instead
         self.tasks = self.sample_tasks(task_path, wide_tasks, narrow_tasks) if tasks is None else tasks
@@ -89,15 +97,31 @@ class MEWA(gym.Env, ABC):
 
     def _get_reward(self, done):
         if done:
-            return self._config_reward[-1]
-        return self._config_reward[self._progress]
+            return self._reward_function[-1]
+        return self._reward_function[self._progress]
 
-    # Convert the one-hot-encoded action into a single integer
-    def _decode_action(self, action_vector):
-        action_vector = action_vector.view(int(np.prod(self.action_space.shape)))
-        action_vector = action_vector.to('cpu').detach().numpy()
-        zeros = np.count_nonzero(action_vector == 0)
-        ones = np.count_nonzero(action_vector == 1)
-        if zeros != len(action_vector)-1 or ones != 1:
-            raise ValueError("Expected the action to be a one-hot-encoded vector. Got: {}".format(action_vector))
-        return np.argmax(action_vector)
+    # Decode a potentially one-hot-encoded action into a single integer
+    def _decode_action(self, action):
+        POTENTIAL_ERROR = f'MEWA expects actions to be one-hot-encoded vectors ' \
+                          f'or integers representing indexes. Got: {action}'
+
+        from collections.abc import Iterable
+        if isinstance(action, Iterable):
+            # Decode the action
+            zeros = np.count_nonzero(action == 0)
+            ones = np.count_nonzero(action == 1)
+            if zeros != len(action) - 1 or ones != 1:
+                raise TypeError(POTENTIAL_ERROR)
+            action_index = np.argmax(action)
+        else:
+            try:
+                action_index = int(action)
+            except TypeError as e:
+                raise TypeError(POTENTIAL_ERROR) from e
+        return action_index
+
+    def _print(self, message, log=False, verbose=1):
+        if log and self.logger is not None:
+            self.logger.info(message)
+        if self.verbose >= verbose:
+            print(message)

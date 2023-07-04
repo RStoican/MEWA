@@ -9,6 +9,6 @@ register(
         'wide_tasks': 1,
         'narrow_tasks': 50,
         'complex_worker': True,
-        'seed': np.random.randint(0, 65536)
+        'seed': None
     }
 )
