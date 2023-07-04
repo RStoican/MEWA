@@ -6,20 +6,10 @@ from os import listdir
 from os.path import isfile, join
 
 import numpy as np
-import torch
 from gym import spaces
 
 from mewa.mewa_base import MEWA
 from mewa.mewa_utils.utils import create_logger, ACTION_LABELS, color_to_one_hot, load_task
-
-
-def format_action(action):
-    if not isinstance(action, torch.Tensor):
-        action = torch.Tensor(action)
-    dim = len(action.shape)
-    if action.shape[dim - 2] == 1:
-        action = action.squeeze(dim - 2)
-    return action.cpu()
 
 
 class MEWASymbolic(MEWA, ABC):
@@ -32,19 +22,21 @@ class MEWASymbolic(MEWA, ABC):
                  complex_worker,
                  seed,
 
-                 test_worker='default',
                  split_dict=None,
                  tasks=None,
                  max_episode_steps=100,
-                 verbose=0,
+
+                 verbose=1,
                  log_name=None):
         self.verbose = verbose
         self.complex_worker = complex_worker
-        self.test_worker = test_worker
         self.max_episode_steps = max_episode_steps
 
         # Used for normalising rewards in wide task distributions
         self._reward_normaliser = None
+
+        seed = seed if seed is not None and seed >= 0 else np.random.randint(0, 65536)
+        self._print(f'Creating environment with seed {seed}', log=True)
 
         if log_name is not None:
             now = datetime.now()
@@ -74,16 +66,18 @@ class MEWASymbolic(MEWA, ABC):
         self._split_index = 0
         self._step_count = 0
 
-    def reset_task(self, task_id):
-        self._print(f'reset_task({task_id})({self.tasks[task_id]["description"]})'
-                    f'({self.tasks[task_id]["worker_personality"]})', log=True)
+    def reset_task(self, task_id=None):
+        task_id = self._np_random.randint(len(self.tasks)) if task_id is None else task_id
+        self._print(f'Resetting task to {task_id}\n'
+                    f'     Description: {self.tasks[task_id]["description"]}\n'
+                    f'     Human: {self.tasks[task_id]["worker_personality"]}', log=True)
         self._task = self.tasks[task_id]
         self._config_reward = self._task['task']['worker_task']['rewards']
         self._progress = 0
         self._step_count = 0
 
     def reset(self, seed=None, return_info=False, options=None):
-        self._print('reset()', log=True, verbose=2)
+        self._print('reset()', log=True, verbose=3)
         super(MEWASymbolic, self).reset(seed, return_info, options)
         self._obs = self._create_initial_obs()
         self._progress = 0
@@ -168,16 +162,18 @@ class MEWASymbolic(MEWA, ABC):
         pass
 
     def _take_step(self, action):
-        action = format_action(action)
+        # action = format_action(action)
 
-        color_index = np.where(action == 1)[0][0]
+        # The action is the index of the chosen block, either one-hot encoded or not. In the former case, decode it
+        from collections.abc import Iterable
+        color_index = np.where(action == 1)[0][0] if isinstance(action, Iterable) else action
         action_label = ACTION_LABELS[color_index]
 
         if action_label in self._task['task']['block_colors']:
-            next_obs, done = self._do_state_transition(color_index)
-            self._print(f'   Turn {self._step_count}: {ACTION_LABELS[color_index]}', log=True, verbose=2)
+            next_obs, done, info = self._do_state_transition(color_index)
+            self._print(f'   Turn {self._step_count}: {ACTION_LABELS[color_index]}' + info, log=True, verbose=3)
         else:
-            self._print(f'   Turn {self._step_count}: {action_label} (NOT IN TASK)', log=True, verbose=2)
+            self._print(f'   Turn {self._step_count}: {action_label} (NOT IN TASK)', log=True, verbose=3)
             next_obs = self._get_obs()
             done = False
         return next_obs, self._get_reward(done), done, {}
@@ -211,37 +207,36 @@ class MEWASymbolic(MEWA, ABC):
         return min_return, max_return
 
     def _do_state_transition(self, color_index):
-        valid_action = self._do_agent_action(color_index)
-        if not valid_action:
-            return self._obs, False
+        if self._obs[color_index] == 0:
+            # Not a valid action
+            return self._obs, False, ''
 
-        complete_structure_mistake = self._do_struct_action(color_index)
+        # There are 3 parts of the environment state "acted" upon: the agent's, the structures' and the goals' states
+        self._do_agent_action(color_index)
+        complete_structure_mistake, info = self._do_struct_action(color_index)
+        self._do_goal_action(color_index, complete_structure_mistake)
 
-        if complete_structure_mistake is not None:
-            self._do_goal_action(color_index, complete_structure_mistake)
-
-        return self._get_obs(), self._is_game_done()
+        # Return the observation (state) built based on the 3 parts above
+        return self._get_obs(), self._is_game_done(), info
 
     def _do_agent_action(self, color_index):
-        if self._obs[color_index] == 0:
-            return False
-        self._obs[color_index] -= 1
-        return True
+        if self._obs[color_index] != 0:
+            self._obs[color_index] -= 1
 
     def _do_struct_action(self, color_index):
         struct_index = 4 + 2 * color_index
         self._obs[struct_index] += 1
 
+        action_info = ACTION_LABELS[color_index]
+
         # Check if a mistake happened
-        if self._is_mistake(struct_index):
-            self._print("   Making mistake when working on the {} structure..."
-                        .format(ACTION_LABELS[color_index]), log=True, verbose=2)
+        is_mistake, info = self._is_mistake(struct_index)
+        if is_mistake:
+            info += f' | Making mistake when working on the {action_info} structure'
             self._obs[struct_index + 1] = 1
         else:
             if self._obs[struct_index] == 1:
-                self._print("   Starting the {} structure...".format(ACTION_LABELS[color_index]), verbose=2)
-            else:
-                self._print("   Adding block to the {} structure...".format(ACTION_LABELS[color_index]), verbose=2)
+                info += f' | Starting {action_info} structure'
 
         # If the current action completes the structure, update the state
         complete_structure_mistake = None
@@ -253,11 +248,14 @@ class MEWASymbolic(MEWA, ABC):
             self._obs[struct_index] = 0
             self._obs[struct_index + 1] = 0
             if complete_structure_mistake:
+                info += f' | Resetting {action_info} structure'
                 self._obs[color_index] += self._task['task']['worker_task']['blocks_per_struct']
-        return complete_structure_mistake
+            else:
+                info += f' | Finishing {action_info} structure'
+        return complete_structure_mistake, info
 
     def _do_goal_action(self, color_index, complete_structure_mistake):
-        if not complete_structure_mistake:
+        if (complete_structure_mistake is not None) and (not complete_structure_mistake):
             # Add the complete structure to the goal and build the next stage of the goal, if available
             self._obs[12 + color_index] = 1
             self._build_goal()
@@ -273,11 +271,9 @@ class MEWASymbolic(MEWA, ABC):
             mistake_probability = self._task['worker_personality'][mistake_type][0]
             mistake_probability = min(max(mistake_probability, 0), 1)
 
-            self._print("   Probability of mistake type {}: {}%"
-                        .format(mistake_type, round(100 * mistake_probability, 2)), log=True, verbose=2)
-
-            return self._np_random.random() < mistake_probability
-        return False
+            info = f' | Probability of mistake type {mistake_type}: {round(100 * mistake_probability, 2)}%'
+            return self._np_random.random() < mistake_probability, info
+        return False, ''
 
     def _is_game_done(self):
         structures_done = self._obs[12:16].sum() == self._task['task']['supervisor_task']['struct_count']
@@ -329,7 +325,7 @@ class MEWASymbolic(MEWA, ABC):
         return np.concatenate([agent_obs, struct_obs, goal_obs]).astype(np.double)
 
     def _load_task(self, description_path):
-        self._print(f"Loading task {description_path}...", log=True)
+        self._print(f"Loading task {description_path}...", log=True, verbose=1)
         return load_task(description_path)
 
     """
@@ -337,6 +333,8 @@ class MEWASymbolic(MEWA, ABC):
     whether this task is used for training or testing
     """
     def _sample_human_default(self, worker_task):
+        VERBOSE_LEVEL = 2
+
         # Sample the interval that will be used for this human, depending on whether this task will be used for
         # training or testing
         if self._split_index < self.split_dict["train_count"]:
@@ -345,8 +343,7 @@ class MEWASymbolic(MEWA, ABC):
             mean_interval_index, std_interval_index = self._create_valid_distribution(self.split_dict["split_eval"])
         self._split_index += 1
 
-        self._print("Creating worker personality:", log=True)
-        self._print((mean_interval_index, std_interval_index), log=True)
+        info = 'Creating worker personality:'
         personality = []
         for index in range(len(worker_task['mistake_gaussians'])):
             mistake_gauss = worker_task['mistake_gaussians'][index]
@@ -362,7 +359,10 @@ class MEWASymbolic(MEWA, ABC):
                                           std_intervals[std_interval_index][1])
 
             personality.append((mean, std))
-            self._print(f"   Mistake Type {index}: {(mean, std)}", log=True)
+            if index > 0:
+                info += ','
+            info += f' {(mean, std)}'
+        self._print(info, log=True, verbose=VERBOSE_LEVEL)
         return personality
 
     # Choose the region of the distribution from which to sample the current human behaviour
@@ -391,7 +391,8 @@ class MEWASymbolic(MEWA, ABC):
     method for a combination of multiple sampling approaches
     """
     def _sample_human_balanced(self, worker_task, use_inc_dist):
-        self._print("Creating worker personality:", log=True)
+        VERBOSE_LEVEL = 2
+        info = 'Creating worker personality:'
 
         personality = []
         previous_mistake_prob = np.inf
@@ -418,12 +419,15 @@ class MEWASymbolic(MEWA, ABC):
             mean = self._np_random.uniform(interval[0], interval[1])
             std = self._np_random.normal(loc=std_gaussian[0], scale=std_gaussian[1])
 
-            self._print(f"   Mistake Type {index}: {(mean, std)}", log=True)
             personality.append((mean, std))
-
             previous_mistake_prob = mean
 
+            if index > 0:
+                info += ','
+            info += f' {(mean, std)}'
+
         self._split_index += 1
+        self._print(info, log=True, verbose=VERBOSE_LEVEL)
         return personality
 
     # Create a valid interval from which to sample the current human behaviour
@@ -455,9 +459,10 @@ class MEWASymbolic(MEWA, ABC):
     # Create a random personality, to be used by a worker. For each possible mistake, generate the mean and std for a
     # specific worker. Mean and std are generated using the Gaussian distributions in the task description
     def _sample_human_simple(self, worker_task):
-        self._print("Creating worker personality:", log=True)
+        VERBOSE_LEVEL = 2
+        info = 'Creating worker personality:'
         if not self.complex_worker:
-            self._print("   Not a complex worker; personality not needed", log=True)
+            self._print("   Not a complex worker; personality not needed", log=True, verbose=2)
             return None
 
         # For each possible mistake, generate the mean and std for this specific worker. Mean and std are generated
@@ -475,7 +480,10 @@ class MEWASymbolic(MEWA, ABC):
             std = self._np_random.normal(loc=std_gaussian[0], scale=std_gaussian[1])
 
             personality.append((mean, std))
-            self._print(f"   Mistake Type {index}: {(mean, std)}", log=True)
+            if index > 0:
+                info += ','
+            info += f' {(mean, std)}'
+        self._print(info, log=True, verbose=VERBOSE_LEVEL)
         return personality
 
     def _split_interval(self, gauss, split):
@@ -483,7 +491,6 @@ class MEWASymbolic(MEWA, ABC):
         mean, std = gauss
         split_points = np.array([mean - 3 * std, mean - 2 * std, mean - 0.5 * std,
                                  mean + 0.5 * std, mean + 2 * std, mean + 3 * std])
-        # split_points = np.linspace(mean - 3 * std, mean + 3 * std, split + 1)
         if split != 5 and split != 1:
             raise ValueError(f'Split should be 5 for mean and 1 for std. Got: {split}')
 
