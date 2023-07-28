@@ -1,0 +1,35 @@
+### General task parameters ###
+# The number of types (colors) of blocks. This gives the total number of actions available
+colors: 4
+
+# The number of blocks for each type
+blocks_per_color: 5
+
+# The number of blocks used when sub-goals are completed. The RL agent does not have access to these blocks
+independent_blocks: 8
+
+
+### Human behaviour ###
+human:
+  # The number of blocks of the same color the human needs to receive to finish a sub-structure
+  # (must be <= blocks_per_color)
+  blocks_per_substruct: 3
+
+  # Whether this human has a complex behavior (stochastic; can make mistakes) or not (deterministic)
+  stochastic_behavior: True
+
+
+### Task goal parameters ###
+goal:
+  # The order of the colors in which the sub-structures have to be completed
+  # (the number of sub-goals should be equal to the number of colors; and each entry must be unique)
+  subgoal_order:
+    - [ 3 ]
+    - [ 1 ]
+    - [ 2 ]
+    - [ 0 ]
+
+  # How many independent blocks to use after each sub-goal is finished. The length of the list should be equal to the
+  # length of subgoal_order - 1 (we assume that no independent blocks are used when the last sub-goal is done).
+  # Moreover, the entries should add up to the number of independent_blocks
+  subgoals: [2, 2, 4]
