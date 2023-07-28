@@ -10,8 +10,9 @@ import gym
 import numpy as np
 from tqdm import trange
 
-from mewa.generator.generator_utils import get_task_params, create_log_dir
+from mewa.generator.generator_utils import create_log_dir
 from mewa.generator.test_policies import TestPolicy
+from mewa.mewa_utils.utils import load_task
 
 
 class TaskEvaluator:
@@ -29,7 +30,7 @@ class TaskEvaluator:
         RANGE_FN = trange if verbose >= 1 else range
 
         if task_params is None:
-            task_params = get_task_params(self.task_path)
+            task_params = load_task(self.task_path)
 
         # Create the environment with a single task, then set the task to a specific worker
         # (i.e. usually the average worker)

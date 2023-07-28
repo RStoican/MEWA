@@ -3,23 +3,9 @@ import os
 import os.path as osp
 
 import dateutil.tz
-import yaml
 
 # Change this
 LOCAL_LOG_DIR = 'output'
-
-
-# The fixed task parameters are the task parameters given in the task description
-def get_task_params(task_yaml):
-    yaml_content = ''
-    with open(task_yaml, 'r') as f:
-        for line in f:
-            if not line.strip().startswith('!!python/object'):
-                if '!!python/object' in line:
-                    line = line.split(' !!python/object')[0] + '\n'
-                yaml_content += line
-
-    return yaml.load(yaml_content, Loader=yaml.Loader)
 
 
 def create_log_dir(exp_prefix, exp_id=None, seed=0, base_log_dir=None):
@@ -38,15 +24,6 @@ def create_log_dir(exp_prefix, exp_id=None, seed=0, base_log_dir=None):
     log_dir = osp.join(base_log_dir, exp_prefix.replace("_", "-"), exp_name)
     os.makedirs(log_dir, exist_ok=True)
     return log_dir
-
-
-def create_simple_exp_name():
-    """
-    Create a unique experiment name with a timestamp
-    """
-    now = datetime.datetime.now(dateutil.tz.tzlocal())
-    timestamp = now.strftime('%Y_%m_%d_%H_%M_%S')
-    return timestamp
 
 
 def dict_to_safe_json(d):

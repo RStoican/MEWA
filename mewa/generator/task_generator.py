@@ -3,14 +3,17 @@ import os
 import random
 import sys
 
-import rospkg
+import click
 import yaml
-from sawyer_gazebo_blocks_puzzle.task import Task, WorkerTask, SupervisorTask
+# from sawyer_gazebo_blocks_puzzle.task import Task, WorkerTask, SupervisorTask
 
 
 # A method for generating a list of integers, where each integer represents the length of a list. Each element has a
 # min value of 1. The length of the list is given by list_len. The sum of all elements is at most max_sum if
 # exact_sum is False, otherwise it is exactly max_sum
+from mewa.mewa_utils.utils import load_task
+
+
 def generate_list_of_lens(list_len, max_sum, exact_sum=False):
     lens = []
     elements_available = max_sum
@@ -59,7 +62,175 @@ def delete_existing_tasks(task_dir):
         os.remove(task_dir + task)
 
 
-class TaskGenerator(object):
+class BaseTaskGenerator:
+    def __init__(self, config):
+        self.config = load_task(config)
+        print(self.config)
+        # FIXME: Uncomment
+        # self._check_valid_config()
+
+    def generate_tasks(self, no_of_tasks):
+        print("Generating {} tasks".format(no_of_tasks))
+        tasks = []
+        for index in range(no_of_tasks):
+            print("Creating task {}".format(index))
+            tasks.append(self._create_task())
+        return tasks
+
+    def save_tasks_yaml(self, tasks):
+        pass
+
+    def _create_task(self):
+        block_colors = self._sample_block_colors()
+        print(block_colors)
+        blocks = self._sample_block_count(len(block_colors))
+        print(blocks)
+        independent_blocks = self._sample_independent_blocks()
+        print(independent_blocks)
+        human_parameters = self._sample_human_parameters(action_space_size=len(blocks))
+        supervisor_task = self.create_supervisor_task(
+            action_space_size=len(blocks), colors=block_colors, supervisor_block_count=independent_blocks,
+            worker_positions=worker_task.blocks_position
+        )
+
+        return Task(goal=goal, block_colors=block_colors, blocks=blocks, supervisor_block_color=supervisor_block_color,
+                    supervisor_blocks=independent_blocks, worker_task=worker_task, supervisor_task=supervisor_task)
+
+    """################################# Sample General Task Parameters #################################"""
+    def _sample_block_colors(self):
+        sample_size = self.config['colors']
+        if isinstance(self.config['colors'], list):
+            sample_size = random.randrange(self.config['colors'][0], self.config['colors'][1] + 1)
+        return list(range(sample_size))
+
+    def _sample_block_count(self, no_of_colors):
+        blocks_per_color = self.config['blocks_per_color']
+        if isinstance(self.config['blocks_per_color'], list):
+            blocks_per_color = random.randrange(self.config['blocks_per_color'][0],
+                                                self.config['blocks_per_color'][1] + 1)
+        return no_of_colors * [blocks_per_color]
+
+    def _sample_independent_blocks(self):
+        if isinstance(self.config['independent_blocks'], int):
+            return self.config['independent_blocks']
+        return random.randrange(self.config['independent_blocks'][0], self.config['independent_blocks'][1] + 1)
+    """##############################################################################################################"""
+
+    """################################# Sample Human Parameters #################################"""
+    def _sample_human_parameters(self, action_space_size):
+        blocks_per_struct = self._sample_blocks_per_struct()
+        print(blocks_per_struct)
+        blocks_position = self._sample_block_positions(blocks_per_struct)
+        stochastic_behavior = self._sample_stochastic_behavior()
+        print(stochastic_behavior)
+        mistake_gaussians = self._sample_mistake_gaussians(action_space_size)
+        return WorkerTask(struct_type=struct_type, blocks_per_struct=blocks_per_struct, blocks_position=blocks_position,
+                          complex_worker=stochastic_behavior, mistake_type=mistake_type, mistake_gaussians=mistake_gaussians,
+                          mistake_positions=mistake_positions)
+
+    def create_worker_task(self, action_space_size, blocks_per_color):
+        struct_type = ""
+        blocks_per_struct = self.sample_blocks_per_struct(blocks_per_color)
+        blocks_position = self.sample_block_positions(blocks_per_struct)
+        complex_worker = self._sample_stochastic_behavior()
+        mistake_type = ""
+        mistake_gaussians = self.sample_mistake_gaussians(action_space_size)
+        mistake_positions = self.sample_mistake_positions(blocks_per_struct, blocks_position)
+
+        return WorkerTask(struct_type=struct_type, blocks_per_struct=blocks_per_struct, blocks_position=blocks_position,
+                          complex_worker=complex_worker, mistake_type=mistake_type, mistake_gaussians=mistake_gaussians,
+                          mistake_positions=mistake_positions)
+
+    def _sample_blocks_per_struct(self):
+        if isinstance(self.config['human']['blocks_per_substruct'], int):
+            return self.config['human']['blocks_per_substruct']
+        return random.randrange(self.config['human']['blocks_per_substruct'][0],
+                                self.config['human']['blocks_per_substruct'][1] + 1)
+
+    # TODO: Implement this for the simulator version of MEWA
+    def _sample_block_positions(self, blocks_per_struct):
+        return []
+
+    def _sample_stochastic_behavior(self):
+        if isinstance(self.config['human']['stochastic_behavior'], bool):
+            return self.config['human']['stochastic_behavior']
+        return random.sample(self.config['human']['stochastic_behavior'], 1)[0]
+
+    # The number of mistake types is the same as the number of actions (i.e. number of different colours)
+    def _sample_mistake_gaussians(self, action_space_size):
+        return [action_space_size * ]
+
+    # The number of mistake types is the same as the number of actions (i.e. number of different colours)
+    def sample_mistake_gaussians(self, action_space_size):
+        # The Gaussians for a complete action space (4 colours)
+        complete_gaussians = [[[0.65, 0.12], [0.09, 0.02]],
+                              [[0.45, 0.12], [0.09, 0.02]],
+                              [[0.2, 0.1], [0.09, 0.02]],
+                              [[0, 0.08], [0.09, 0.02]]]
+
+        # For reduced action spaces, only the last action_space_size Gaussians are used. This ensures that having many
+        # different colours still gives a low mistake probability, not a relatively high one
+        first_gaussian_index = len(complete_gaussians) - action_space_size
+        return complete_gaussians[first_gaussian_index:]
+    """##############################################################################################################"""
+
+    def _check_valid_config(self):
+        self._check_parameter('colors', min_value=2)
+        self._check_parameter('blocks_per_color', min_value=1)
+        self._check_parameter('independent_blocks', min_value=1)
+        self._check_parameter('blocks_per_substruct', min_value=1, task_dict=self.config['human'])
+
+        if not isinstance(self.config['human']['stochastic_behavior'], bool):
+            raise ValueError(f'Expected the <stochastic_behavior> parameter to be a boolean. '
+                             f'Got: {self.config["human"]["stochastic_behavior"]}')
+
+        if not isinstance(self.config['goal']['subgoal_order'], list):
+            raise ValueError(f'Expected the <subgoal_order> parameter to be a list. '
+                             f'Got: {self.config["goal"]["subgoal_order"]}')
+        subgoals = []
+        for element in self.config['goal']['subgoal_order']:
+            if not isinstance(element, list):
+                raise ValueError(f'Expected each element of <subgoal_order> to be a list. Got: {element}')
+            subgoals += element
+        if not (len(subgoals) == self.config['colors'] and len(subgoals) == len(set(subgoals))):
+            raise ValueError(f'Expected <subgoal_order> to have a unique element for each color. '
+                             f'Got: {subgoals}')
+        for element in subgoals:
+            if not (isinstance(element, int) and 0 <= element < self.config['colors']):
+                raise ValueError(f'Expected each element of <subgoal_order> to be an integer in [0, <colors>). '
+                                 f'Got: {element}')
+
+        if not (isinstance(self.config['goal']['subgoals'], list)
+                and len(self.config['goal']['subgoals']) == len(self.config['goal']['subgoal_order'])-1):
+            raise ValueError(f'Expected <subgoals> to be a list of the same length as <subgoal_order> - 1. '
+                             f'Got: {self.config["goal"]["subgoals"]}')
+        subgoal_sum = 0
+        for element in self.config['goal']['subgoals']:
+            if not (isinstance(element, int) and element >= 1):
+                raise ValueError(f'Expected each <subgoals> to be an integer >= 1. Got: {element}')
+            subgoal_sum += element
+        if subgoal_sum != self.config["independent_blocks"]:
+            raise ValueError(f'Expected <subgoals> to add up to <independent_blocks>. Got: {subgoal_sum}')
+
+    def _check_parameter(self, parameter, min_value, task_dict=None):
+        task_dict = self.config if task_dict is None else task_dict
+        if not ((isinstance(task_dict[parameter], int) and task_dict[parameter] >= min_value)
+                or (isinstance(task_dict[parameter], list) and len(task_dict[parameter]) == 2)):
+            raise ValueError(f'Expected the <{parameter}> parameter to be an integer >= {min_value} '
+                             f'or an interval (x,y). Got: {task_dict[parameter]}')
+
+
+class SymbolicTaskGenerator(BaseTaskGenerator):
+    def __init__(self, config):
+        super().__init__(config)
+
+
+class SimulatorTaskGenerator(BaseTaskGenerator):
+    def __init__(self, config):
+        super().__init__(config)
+
+
+class TaskGenerator2(object):
     DEFAULT_TARGET_DIR = "random"
     AVAILABLE_COLORS = ["orange", "blue", "green", "red"]
 
@@ -336,60 +507,3 @@ class TaskGenerator(object):
             task = self.create_task()
             self.save_task_yaml(task, index)
         print("Done")
-
-
-class SmallTaskGenerator(TaskGenerator):
-    DEFAULT_TARGET_DIR = "random_small"
-
-    MIN_COLOR_SAMPLE = 2
-    MAX_COLOR_SAMPLE = 3
-
-    MIN_BLOCK_PER_TYPE = 2
-    MAX_BLOCK_PER_TYPE = 4
-
-    MIN_SUPERVISOR_BLOCKS = 4
-    MAX_SUPERVISOR_BLOCKS = 6
-
-    MIN_BLOCKS_PER_STRUCT = 2
-    MAX_BLOCKS_PER_STRUCT = 3
-
-    MIN_SUPERVISOR_SUBGOAL_COUNT = 1
-
-    def __init__(self, task_dir, target_dir):
-        super(SmallTaskGenerator, self).__init__(task_dir, target_dir)
-
-
-def main():
-    GENERATOR_TYPES = ["default", "small"]
-
-    task_count = 100
-    generator_type = GENERATOR_TYPES[0]
-    target_dir = None
-    if len(sys.argv) > 4:
-        raise TypeError("Expected at most 3 arguments: \n"
-                        "   - (optional) The number of tasks to generate. Default: 100"
-                        "   - (optional) The type of generator to use"
-                        "   - (optional) The target directory to save all tasks")
-    if len(sys.argv) > 1:
-        try:
-            task_count = int(sys.argv[1])
-        except ValueError as e:
-            sys.exit("Expected the number of tasks to be an int. Got: {}".format(sys.argv[1]))
-    if len(sys.argv) > 2:
-        generator_type = sys.argv[2]
-        if generator_type not in GENERATOR_TYPES:
-            raise ValueError("Expected the generator type to be one of {}. Got: {}"
-                             .format(GENERATOR_TYPES, generator_type))
-    if len(sys.argv) > 3:
-        target_dir = sys.argv[3]
-
-    task_dir = rospkg.RosPack().get_path("sawyer_gazebo_blocks_puzzle") + "/tasks/"
-    if generator_type == "default":
-        task_generator = TaskGenerator(task_dir, target_dir)
-    else:
-        task_generator = SmallTaskGenerator(task_dir, target_dir)
-    task_generator.generate_tasks(task_count)
-
-
-if __name__ == '__main__':
-    main()
