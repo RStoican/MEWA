@@ -5,7 +5,7 @@ register(
     id='MEWASymbolic-v0',
     entry_point='mewa.mewa_symbolic:MEWASymbolic',
     kwargs={
-        'task_path': 'optimal_tasks/reward-test/2022_12_21_12_18_40',
+        'task_path': None,
         'wide_tasks': 1,
         'narrow_tasks': 50,
         'complex_worker': True,

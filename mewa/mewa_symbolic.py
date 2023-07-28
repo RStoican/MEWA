@@ -26,7 +26,7 @@ class MEWASymbolic(MEWA, ABC):
                  max_episode_steps=100,
 
                  verbose=0,
-                 log_name=None):
+                 log_path=None):
         self.complex_worker = complex_worker
         self.max_episode_steps = max_episode_steps
 
@@ -43,7 +43,7 @@ class MEWASymbolic(MEWA, ABC):
             tasks=tasks,
             observation_space=spaces.Box(low=0, high=20, shape=(18,), dtype=np.double),
             verbose=verbose,
-            log_name=log_name
+            log_path=log_path
         )
 
         # The current state of the env
@@ -142,7 +142,7 @@ class MEWASymbolic(MEWA, ABC):
 
                 tasks.append({"description": description_path, "worker_personality": worker_personality, "task": task})
 
-            # If we are using a wide task distribution, we need a reward normaliser
+            # For each task (NOT each worker variation), update the values used to normalise rewards.
             self._update_reward_normaliser(tasks[-1])
         return tasks
 
@@ -257,7 +257,7 @@ class MEWASymbolic(MEWA, ABC):
             mistake_probability = self._task['worker_personality'][mistake_type][0]
             mistake_probability = min(max(mistake_probability, 0), 1)
 
-            info = f' | Probability of mistake type {mistake_type}: {round(100 * mistake_probability, 2)}%'
+            info = f' | Probability mistake type {mistake_type}: {round(100 * mistake_probability, 2)}%'
             return self._np_random.random() < mistake_probability, info
         return False, ''
 
@@ -311,7 +311,7 @@ class MEWASymbolic(MEWA, ABC):
         return np.concatenate([agent_obs, struct_obs, goal_obs]).astype(np.double)
 
     def _load_task(self, description_path):
-        self._print(f"Loading task {description_path}...", log=True, verbose=1)
+        self._print(f"Loading task {description_path}", log=True, verbose=1)
         return load_task(description_path)
 
     """

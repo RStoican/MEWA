@@ -81,19 +81,13 @@ def create_simple_exp_name():
     return timestamp
 
 
-LOG_DIR = None
+def create_logger(log_name, log_path, use_format=False):
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
-
-def create_logger(log_name, log_file, use_format=False):
-    if LOG_DIR is not None:
-        log_file = os.path.join(str(LOG_DIR), log_file)
-    else:
-        raise ValueError('The global variable LOG_DIR should be set before creating a logger. Got: {}'.format(LOG_DIR))
-
-    logger = logging.getLogger(log_name)
+    logger = logging.getLogger(name=log_name)
     logger.setLevel(logging.DEBUG)
 
-    ch = logging.FileHandler(log_file, mode='w')
+    ch = logging.FileHandler(log_path, mode='w')
     ch.setLevel(logging.DEBUG)
 
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s' if use_format else ''
@@ -102,3 +96,42 @@ def create_logger(log_name, log_file, use_format=False):
 
     logger.addHandler(ch)
     return logger
+
+
+# Make sure the parameters of the given task are valid
+def check_task(task):
+    # Check agent parameters
+    if len(task['blocks']) != len(task['block_colors']):
+        raise ValueError("There should be as many types of blocks as there are colors. "
+                         "Expected: {}; Got: {}".format(len(task['block_colors']), len(task['blocks'])))
+    max_blocks = 5
+    for index in range(len(task['blocks'])):
+        if task['blocks'][index] < 0 or task['blocks'][index] > max_blocks:
+            raise ValueError("Each color must have at least 0 and at most {} blocks. Color {} had: {}"
+                             .format(max_blocks, task['block_colors'][index], task['blocks'][index]))
+    max_blocks = 8
+    if task['supervisor_blocks'] < 0 or task['supervisor_blocks'] > max_blocks:
+        raise ValueError("The supervisor must have at least 0 and at most {} blocks. Got: {}"
+                         .format(max_blocks, task['supervisor_blocks']))
+
+    # Check structure parameters
+    struct_task = task['worker_task']
+    if len(struct_task['blocks_position']) != struct_task['blocks_per_struct']:
+        raise ValueError("Every block should have a position relative to the first one. Expected: {}; Got: {}"
+                         .format(struct_task['blocks_per_struct'], len(struct_task['blocks_position'])))
+    if len(struct_task['mistake_positions']) != struct_task['blocks_per_struct']:
+        raise ValueError("Every block should have a mistake position relative to the first one. "
+                         "Expected: {}; Got: {}"
+                         .format(struct_task['blocks_per_struct'], len(struct_task['mistake_positions'])))
+
+    # Check goal parameters
+    goal_task = task['supervisor_task']
+    if len(goal_task['subgoals_requirements']) != goal_task['subgoals_count']:
+        raise ValueError("Every step of the supervisor's goal should have a requirement. Expected: {}; Got: {}"
+                         .format(goal_task['subgoals_count'], len(goal_task['subgoals_requirements'])))
+    if len(goal_task['subgoals']) != goal_task['subgoals_count']:
+        raise ValueError("Wrong number of sub-goals given. "
+                         "Expected: {}; Got: {}".format(goal_task['subgoals_count'], len(goal_task['subgoals'])))
+    if len(goal_task['worker_struct']) != goal_task['struct_count']:
+        raise ValueError("Wrong number of worker structures given. "
+                         "Expected: {}; Got: {}".format(goal_task['struct_count'], len(goal_task['worker_struct'])))

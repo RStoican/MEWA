@@ -1,4 +1,5 @@
 import abc
+import os.path
 from abc import ABC
 from datetime import datetime
 
@@ -11,6 +12,17 @@ from mewa.mewa_utils.one_hot_encoding import OneHotEncoding
 from mewa.mewa_utils.utils import create_logger
 
 
+def set_up_logger(log_path, seed):
+    if log_path is None:
+        return None
+
+    now = datetime.now()
+    log_path_no_extension, extension = os.path.splitext(log_path)
+    unique_log_path = f'{log_path_no_extension}_{seed}_{now.strftime("%Y_%m_%d_%H_%M_%S_%f")}{extension}'
+    log_filename = os.path.splitext(os.path.basename(unique_log_path))[0]
+    return create_logger(f'mewa.{log_filename}', unique_log_path)
+
+
 class MEWA(gym.Env, ABC):
     def __init__(self,
                  task_path,
@@ -21,23 +33,21 @@ class MEWA(gym.Env, ABC):
                  split_dict,
                  tasks,
                  verbose,
-                 log_name,
+                 log_path,
 
                  input_shape=None,
-                 observation_space=None,):
+                 observation_space=None, ):
         super(MEWA, self).__init__()
         self.complex_worker = complex_worker
         self.split_dict = split_dict
 
+        seed = seed if seed is not None and seed >= 0 else np.random.randint(0, 65536)
+
         # Set up the logger
         self.verbose = verbose
-        self.logger = None
-        if log_name is not None:
-            now = datetime.now()
-            log_file = log_name + '_' + now.strftime('%Y_%m_%d_%H_%M_%S_%f')
-            self.logger = create_logger('env', log_file)
+        self.logger = set_up_logger(log_path, seed)
 
-        # Create a seed and set up the RNG
+        # Set up the RNG
         seed = seed if seed is not None and seed >= 0 else np.random.randint(0, 65536)
         self._print(f'Creating environment with seed {seed}', log=True)
         self._np_random = None
@@ -121,7 +131,7 @@ class MEWA(gym.Env, ABC):
         return action_index
 
     def _print(self, message, log=False, verbose=1):
-        if log and self.logger is not None:
+        if self.logger is not None and log:
             self.logger.info(message)
         if self.verbose >= verbose:
             print(message)
