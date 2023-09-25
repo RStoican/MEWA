@@ -27,11 +27,14 @@ class MEWASymbolic(MEWA, ABC):
 
                  verbose=0,
                  log_path=None):
+        """
+        A symoblic version of MEWA, with a discrete, low-dimensional state space. For more details, see mewa_base
+
+        :param max_episode_steps: The max number of steps before the tasks fails
+        """
+
         self.complex_worker = complex_worker
         self.max_episode_steps = max_episode_steps
-
-        # Used for normalising rewards in wide task distributions
-        self._reward_normaliser = None
 
         super(MEWASymbolic, self).__init__(
             task_path=task_path,
@@ -41,6 +44,7 @@ class MEWASymbolic(MEWA, ABC):
             seed=seed,
             split_dict=split_dict,
             tasks=tasks,
+            # FIXME The obs space should depend on the task description (especially important for wide distributions)
             observation_space=spaces.Box(low=0, high=20, shape=(18,), dtype=np.double),
             verbose=verbose,
             log_path=log_path
@@ -167,35 +171,10 @@ class MEWASymbolic(MEWA, ABC):
     def _get_obs(self):
         return copy.deepcopy(self._obs)
 
-    def _update_reward_normaliser(self, task):
-        min_return, max_return = self._get_min_max_return_normaliser(task)
-        self._reward_normaliser[task['description']] = {
-            'min_return': min_return,
-            'max_return': max_return
-        }
-
-    def _get_min_max_return_normaliser(self, task):
-        if self._reward_normaliser is None:
-            self._reward_normaliser = {}
-
-        worker_task = task['task']['worker_task']
-        rewards = worker_task['rewards']
-
-        # Compute the min and max returns of this task
-        min_return = self.max_episode_steps * rewards[0]
-        max_return = []
-        for index in range(len(rewards)):
-            min_steps = worker_task['blocks_per_struct']
-            if index == 0:
-                min_steps -= 1
-            max_return.append(min_steps * rewards[index])
-        max_return = np.sum(max_return)
-        return min_return, max_return
-
     def _do_state_transition(self, color_index):
         if self._obs[color_index] == 0:
             # Not a valid action
-            return self._obs, False, ''
+            return self._get_obs(), False, ''
 
         # There are 3 parts of the environment state "acted" upon: the agent's, the structures' and the goals' states
         self._do_agent_action(color_index)

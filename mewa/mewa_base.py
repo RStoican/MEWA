@@ -5,7 +5,6 @@ from datetime import datetime
 
 import gym
 import numpy as np
-from gym import spaces
 from gym.utils import seeding
 
 from mewa.mewa_utils.one_hot_encoding import OneHotEncoding
@@ -34,9 +33,24 @@ class MEWA(gym.Env, ABC):
                  tasks,
                  verbose,
                  log_path,
+                 observation_space):
+        """
+        The abstract base class of MEWA. This should be extended with concrete implementations of MEWA
 
-                 input_shape=None,
-                 observation_space=None, ):
+        :param task_path: For narrow distributions: the path to a task file.
+        For wide distributions: the path to a directory containing multiple task files
+        :param wide_tasks: The number of (wide) tasks
+        :param narrow_tasks: The number of task variations for each (wide) task (i.e. narrow tasks per wide task)
+        :param complex_worker: Whether the worker can make mistakes or not
+        :param seed: The random seed of the environment
+        :param split_dict: Workers can be sampled from different regions of the distribution during meta-training and
+        meta-testing. If None, use the entire distribution
+        :param tasks: A set of tasks is sampled when this object is created. Use this parameter instead, if given
+        :param verbose: The amount of information to print
+        :param log_path: An optional path to a logging file
+        :param observation_space: The types of observations used by this environment
+        """
+
         super(MEWA, self).__init__()
         self.complex_worker = complex_worker
         self.split_dict = split_dict
@@ -48,23 +62,25 @@ class MEWA(gym.Env, ABC):
         self.logger = set_up_logger(log_path, seed)
 
         # Set up the RNG
-        seed = seed if seed is not None and seed >= 0 else np.random.randint(0, 65536)
         self._print(f'Creating environment with seed {seed}', log=True)
         self._np_random = None
         MEWA.reset(self, seed=seed)
 
+        # FIXME The obs and act spaces should depend on the task description
+        #  (especially important for wide distributions)
         # Create the state and action spaces
-        assert input_shape is not None or observation_space is not None
-        self.action_space = OneHotEncoding(4)
+        self.action_space = OneHotEncoding(4, seed=int(self._np_random.integers(65536)))
         self.observation_space = observation_space
-        if self.observation_space is 0:
-            self.observation_space = spaces.Box(low=0, high=1, shape=input_shape, dtype=np.double)
+        self.observation_space.seed(int(self._np_random.integers(65536)))
 
         # For each task, the reward function will be given in the task description
         self._reward_function = None
 
         # Keep track of the sub-goals completed
         self._progress = 0
+
+        # Used for normalising rewards
+        self._reward_normaliser = None
 
         # Randomly generate the required number of tasks. If a list of tasks has been given, use that instead
         self.tasks = self.sample_tasks(task_path, wide_tasks, narrow_tasks) if tasks is None else tasks
@@ -87,6 +103,8 @@ class MEWA(gym.Env, ABC):
 
     def set_tasks(self, tasks):
         self.tasks = tasks
+        for task in self.tasks:
+            self._update_reward_normaliser(task)
 
     # Reset the current task to the initial state
     def reset(self, seed=None, return_info=False, options=None):
@@ -99,9 +117,6 @@ class MEWA(gym.Env, ABC):
         _ = None if not return_info else (None, None)
         return _
 
-    def count_risks(self):
-        return {}
-
     def get_progress(self):
         return self._progress
 
@@ -109,6 +124,31 @@ class MEWA(gym.Env, ABC):
         if done:
             return self._reward_function[-1]
         return self._reward_function[self._progress]
+
+    def _update_reward_normaliser(self, task):
+        min_return, max_return = self._get_min_max_return_normaliser(task)
+        self._reward_normaliser[task['description']] = {
+            'min_return': min_return,
+            'max_return': max_return
+        }
+
+    def _get_min_max_return_normaliser(self, task):
+        if self._reward_normaliser is None:
+            self._reward_normaliser = {}
+
+        worker_task = task['task']['worker_task']
+        rewards = worker_task['rewards']
+
+        # Compute the min and max returns of this task
+        min_return = self.max_episode_steps * rewards[0]
+        max_return = []
+        for index in range(len(rewards)):
+            min_steps = worker_task['blocks_per_struct']
+            if index == 0:
+                min_steps -= 1
+            max_return.append(min_steps * rewards[index])
+        max_return = np.sum(max_return)
+        return min_return, max_return
 
     # Decode a potentially one-hot-encoded action into a single integer
     def _decode_action(self, action):
