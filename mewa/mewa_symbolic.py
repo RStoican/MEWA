@@ -79,6 +79,7 @@ class MEWASymbolic(MEWA, ABC):
 
     def step(self, action):
         obs, reward, done, info = self._take_step(action)
+        info['reward_raw'] = reward
 
         self._step_count += 1
         if self._step_count >= self.max_episode_steps:
@@ -148,6 +149,8 @@ class MEWASymbolic(MEWA, ABC):
 
             # For each task (NOT each worker variation), update the values used to normalise rewards.
             self._update_reward_normaliser(tasks[-1])
+            # if len(descriptions) > 1:
+            #     self._update_reward_normaliser(tasks[-1])
         return tasks
 
     # Change the tasks to a list of tasks with uniform workers (starting from the strongest to the weakest worker)
@@ -166,6 +169,8 @@ class MEWASymbolic(MEWA, ABC):
             self._print(f'   Turn {self._step_count}: {action_label} (NOT IN TASK)', log=True, verbose=3)
             next_obs = self._get_obs()
             done = False
+        # info = {'task': self._task['worker_personality'], 'task_id': self._task_id}
+        # return next_obs, self._get_reward(done), done, info
         return next_obs, self._get_reward(done), done, {}
 
     def _get_obs(self):
